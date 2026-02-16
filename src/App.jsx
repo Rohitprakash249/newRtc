@@ -1,10 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
 
+// Google public STUN servers to enable WebRTC across different networks (not just local)
+const iceServers = [
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+      "stun:stun3.l.google.com:19302",
+      "stun:stun4.l.google.com:19302",
+    ],
+  },
+];
+
 function App() {
-  let peerConnection = new RTCPeerConnection();
+  // peerConnection is now using public STUN servers for ICE candidate gathering across all networks
+  let peerConnection = new RTCPeerConnection({ iceServers });
   let localStream;
   let remoteStream;
 
@@ -25,45 +39,62 @@ function App() {
     };
   };
 
-  let createOffer = async () => {
-    peerConnection.onicecandidate = async (event) => {
-      //Event that fires off when a new offer ICE candidate is created
-      if (event.candidate) {
-        document.getElementById("offer-sdp").value = JSON.stringify(
-          peerConnection.localDescription,
-        );
+  // Helper to wait until all ICE candidates are gathered
+  const waitForICEGatheringComplete = () => {
+    return new Promise((resolve) => {
+      if (peerConnection.iceGatheringState === "complete") {
+        resolve();
+      } else {
+        const checkState = () => {
+          if (peerConnection.iceGatheringState === "complete") {
+            peerConnection.removeEventListener("icegatheringstatechange", checkState);
+            resolve();
+          }
+        };
+        peerConnection.addEventListener("icegatheringstatechange", checkState);
       }
-    };
+    });
+  };
 
+  let createOffer = async () => {
+    // clear textarea
+    document.getElementById("offer-sdp").value = "";
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
+
+    // Wait until ICE gathering is complete
+    await waitForICEGatheringComplete();
+
+    // output full offer SDP w/ ICE candidates
+    document.getElementById("offer-sdp").value = JSON.stringify(peerConnection.localDescription);
   };
 
   let createAnswer = async () => {
-    let offer = JSON.parse(document.getElementById("offer-sdp").value);
+    let offerStr = document.getElementById("offer-sdp").value;
+    if (!offerStr) return;
+    let offer = JSON.parse(offerStr);
 
-    peerConnection.onicecandidate = async (event) => {
-      //Event that fires off when a new answer ICE candidate is created
-      if (event.candidate) {
-        console.log("Adding answer candidate...:", event.candidate);
-        document.getElementById("answer-sdp").value = JSON.stringify(
-          peerConnection.localDescription,
-        );
-      }
-    };
+    // clear textarea
+    document.getElementById("answer-sdp").value = "";
 
     await peerConnection.setRemoteDescription(offer);
 
     let answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
+
+    // Wait until ICE gathering is complete
+    await waitForICEGatheringComplete();
+
+    // output full answer SDP w/ ICE candidates
+    document.getElementById("answer-sdp").value = JSON.stringify(peerConnection.localDescription);
   };
 
   let addAnswer = async () => {
-    console.log("Add answer triggerd");
-    let answer = JSON.parse(document.getElementById("answer-sdp").value);
-    console.log("answer:", answer);
+    let answerStr = document.getElementById("answer-sdp").value;
+    if (!answerStr) return;
+    let answer = JSON.parse(answerStr);
     if (!peerConnection.currentRemoteDescription) {
-      peerConnection.setRemoteDescription(answer);
+      await peerConnection.setRemoteDescription(answer);
     }
   };
 
@@ -72,7 +103,8 @@ function App() {
     document.getElementById("create-offer").addEventListener("click", createOffer);
     document.getElementById("create-answer").addEventListener("click", createAnswer);
     document.getElementById("add-answer").addEventListener("click", addAnswer);
-  });
+    // eslint-disable-next-line
+  }, []); // mount only ONCE for event binding
 
   return (
     <>
@@ -82,16 +114,9 @@ function App() {
         <img width="100%" src="WebRTC SDP Gif.gif" />
 
         <p>
-          <b>Instructions: </b>Start by opening two tabs side by side and follow the steps below to
-          pass SDP offer and answer. I will refer to each tab as{" "}
-          <i>
-            <b>User 1</b>
-          </i>{" "}
-          and{" "}
-          <i>
-            <b>User 2</b>
-          </i>
-          .
+          <b>Instructions: </b>Start by opening two tabs (can be on different devices, networks, or
+          WiFi) and follow the steps below to pass SDP offer and answer. This works cross-network by
+          using public STUN servers.
         </p>
         <a href="https://github.com/dennisivy/WebRTC-Handshake/" target="_blank">
           <b>Source Code</b>
@@ -132,6 +157,13 @@ function App() {
           and then click "Add Answer"
         </p>
         <button id="add-answer">Add answer</button>
+      </div>
+      <div>
+        <small>
+          <b>Note:</b> This app now uses Google public STUN servers so you can connect outside your
+          local network as well. In extreme network/firewall situations, a TURN server may be
+          needed.
+        </small>
       </div>
     </>
   );
